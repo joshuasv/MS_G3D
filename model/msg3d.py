@@ -7,13 +7,59 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import import_class, count_params
-from model.ms_gcn import MultiScale_GraphConv as MS_GCN
-from model.ms_tcn import MultiScale_TemporalConv as MS_TCN
-from model.ms_gtcn import SpatialTemporal_MS_GCN, UnfoldTemporalWindows
-from model.mlp import MLP
-from model.activation import activation_factory
+from signbert.model.thirdparty.MS_G3D.utils import import_class, count_params
+from signbert.model.thirdparty.MS_G3D.model.ms_gcn import MultiScale_GraphConv as MS_GCN
+from signbert.model.thirdparty.MS_G3D.model.ms_tcn import MultiScale_TemporalConv as MS_TCN
+from signbert.model.thirdparty.MS_G3D.model.ms_gtcn import SpatialTemporal_MS_GCN, UnfoldTemporalWindows
+from signbert.model.thirdparty.MS_G3D.model.mlp import MLP
+from signbert.model.thirdparty.MS_G3D.model.activation import activation_factory
 
+from IPython import embed
+
+
+class HeadlessModel(nn.Module):
+    def __init__(
+        self,
+        num_point,
+        num_gcn_scales,
+        num_g3d_scales,
+        graph,
+        hid_dim,
+        msg_3d_dropout,
+        in_channels,
+    ):
+        super(HeadlessModel, self).__init__()
+
+        A_binary = graph.A_binary
+
+        self.data_bn = nn.BatchNorm1d(in_channels * num_point)
+
+        hid_dim = [in_channels,] + hid_dim
+        blocks = []
+        for i in range(len(hid_dim) - 1):
+            gcn3d1 = MultiWindow_MS_G3D(hid_dim[i], hid_dim[i+1], A_binary, num_g3d_scales, window_stride=1)
+            sgcn1 = nn.Sequential(
+                MS_GCN(num_gcn_scales, hid_dim[i], hid_dim[i+1], A_binary, disentangled_agg=True),
+                MS_TCN(hid_dim[i+1], hid_dim[i+1]),
+                MS_TCN(hid_dim[i+1], hid_dim[i+1]))
+            sgcn1[-1].act = nn.Identity()
+            tcn1 = MS_TCN(hid_dim[i+1], hid_dim[i+1])
+            sub_block = torch.nn.ModuleList([gcn3d1, sgcn1, tcn1])
+            blocks.append(sub_block)
+        self.blocks = torch.nn.ModuleList(blocks)
+
+    def forward(self, x, lens):
+        N, C, T, V, M = x.size()
+        x = x.permute(0, 4, 3, 1, 2).contiguous().view(N, M * V * C, T)
+        x = self.data_bn(x)
+        x = x.view(N * M, V, C, T).permute(0,2,3,1).contiguous()
+
+        # Apply activation to the sum of the pathways
+        for sgcn1, gcn3d1, tcn1 in self.blocks: 
+            x = F.relu(sgcn1(x) + gcn3d1(x), inplace=True)
+            x = tcn1(x)
+
+        return x
 
 class MS_G3D(nn.Module):
     def __init__(self,

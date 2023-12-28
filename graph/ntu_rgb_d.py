@@ -4,7 +4,7 @@ sys.path.extend(['../'])
 
 import numpy as np
 
-from graph import tools
+from signbert.model.thirdparty.MS_G3D.graph import tools
 
 num_node = 25
 self_link = [(i, i) for i in range(num_node)]
