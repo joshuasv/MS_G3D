@@ -13,6 +13,7 @@ from signbert.model.thirdparty.MS_G3D.model.ms_tcn import MultiScale_TemporalCon
 from signbert.model.thirdparty.MS_G3D.model.ms_gtcn import SpatialTemporal_MS_GCN, UnfoldTemporalWindows
 from signbert.model.thirdparty.MS_G3D.model.mlp import MLP
 from signbert.model.thirdparty.MS_G3D.model.activation import activation_factory
+from signbert.model.masked_batchnorm import MaskedBatchNorm1d
 
 from IPython import embed
 
@@ -32,7 +33,7 @@ class HeadlessModel(nn.Module):
 
         A_binary = graph.A_binary
 
-        self.data_bn = nn.BatchNorm1d(in_channels * num_point)
+        self.data_bn = MaskedBatchNorm1d(in_channels * num_point)
 
         hid_dim = [in_channels,] + hid_dim
         blocks = []
@@ -51,7 +52,7 @@ class HeadlessModel(nn.Module):
     def forward(self, x, lens):
         N, C, T, V, M = x.size()
         x = x.permute(0, 4, 3, 1, 2).contiguous().view(N, M * V * C, T)
-        x = self.data_bn(x)
+        x = self.data_bn(x, lens)
         x = x.view(N * M, V, C, T).permute(0,2,3,1).contiguous()
 
         # Apply activation to the sum of the pathways
